@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 
 BN_MOMENTUM = 0.1
-INPUT_D = 2048
+INPUT_D = 150
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
@@ -21,7 +21,123 @@ def conv1x1(in_planes, out_planes, stride=1):
 
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
             bias=False)
-    
+
+class conv_block(nn.Module):
+    """
+    Convolution Block 
+    """
+    def __init__(self, in_ch, out_ch):
+        super(conv_block, self).__init__()
+        
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True))
+
+    def forward(self, x):
+
+        x = self.conv(x)
+        return x
+
+class up_conv(nn.Module):
+    """
+    Up Convolution Block
+    """
+    def __init__(self, in_ch, out_ch):
+        super(up_conv, self).__init__()
+        self.up = nn.Sequential(
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        x = self.up(x)
+        return x
+
+class U_Net(nn.Module):
+    """
+    UNet - Basic Implementation
+    Paper : https://arxiv.org/abs/1505.04597
+    """
+    def __init__(self, in_ch=1764, out_ch=13):
+        super(U_Net, self).__init__()
+
+        n1 = 64
+        filters = [n1, n1 * 2, n1 * 4, n1 * 8, n1 * 16]
+        
+        self.Maxpool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.Maxpool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.Maxpool3 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.Maxpool4 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        self.Conv1 = conv_block(in_ch, filters[0])
+        self.Conv2 = conv_block(filters[0], filters[1])
+        self.Conv3 = conv_block(filters[1], filters[2])
+        self.Conv4 = conv_block(filters[2], filters[3])
+        #self.Conv5 = conv_block(filters[3], filters[4])
+
+        #self.Up5 = up_conv(filters[4], filters[3])
+        #self.Up_conv5 = conv_block(filters[4], filters[3])
+
+        self.Up4 = up_conv(filters[3], filters[2])
+        self.Up_conv4 = conv_block(filters[3], filters[2])
+
+        self.Up3 = up_conv(filters[2], filters[1])
+        self.Up_conv3 = conv_block(filters[2], filters[1])
+
+        self.Up2 = up_conv(filters[1], filters[0])
+        self.Up_conv2 = conv_block(filters[1], filters[0])
+
+        self.Conv = nn.Conv2d(filters[0], out_ch, kernel_size=1, stride=1, padding=0)
+
+       # self.active = torch.nn.Sigmoid()
+
+    def forward(self, x):
+
+        e1 = self.Conv1(x)
+
+        e2 = self.Maxpool1(e1)
+        e2 = self.Conv2(e2)
+
+        e3 = self.Maxpool2(e2)
+        e3 = self.Conv3(e3)
+
+        e4 = self.Maxpool3(e3)
+        e4 = self.Conv4(e4)
+
+        #e5 = self.Maxpool4(e4)
+        #e5 = self.Conv5(e5)
+
+        #d5 = self.Up5(e5)
+        #d5 = torch.cat((e4, d5), dim=1)
+        
+        #d5 = self.Up_conv5(d5)
+        
+        d4 = self.Up4(e4)
+        d4 = torch.cat((e3,d4),dim=1)
+
+        d4 = self.Up_conv4(d4)
+
+        d3 = self.Up3(d4)
+        d3 = torch.cat((e2, d3), dim=1)
+        d3 = self.Up_conv3(d3)
+
+        d2 = self.Up2(d3)
+        d2 = torch.cat((e1, d2), dim=1)
+        d2 = self.Up_conv2(d2)
+
+        out = self.Conv(d2)
+
+        #d1 = self.active(out)
+
+        return out
+
+
 class BasicBlock(nn.Module):
     expansion = 1
 
@@ -100,11 +216,13 @@ class PoseResNet(nn.Module):
     def __init__(self, block, layers, **kwargs):
         self.inplanes = 64
         self.deconv_with_bias = False
-
         super(PoseResNet, self).__init__()
         # ResNet
+        self.RB = BasicBlock(inplanes=1764, planes=150, stride=1)
+        self.U = U_Net()
+        '''
         self.conv1 = nn.Sequential(
-            nn.Conv2d(INPUT_D, self.inplanes, kernel_size=3, stride=1, padding=0, bias=False),
+            nn.Conv2d(9, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
             nn.ReLU(inplace=True)
             )
@@ -113,7 +231,6 @@ class PoseResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2) # Bottleneck 4
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2) # Bottleneck 6
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2) # Bottlenect 3
-
 
         # used for deconv layers   num_deconv_layers,  num_deconv_filters, num_deconv_kernels
         self.deconv_layers = self._make_deconv_layer(
@@ -129,7 +246,7 @@ class PoseResNet(nn.Module):
             stride=1,
             padding=0 # if FINAL_CONV_KERNEL = 3 else 1
         )
-
+        '''
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
@@ -188,13 +305,14 @@ class PoseResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = F.interpolate(x, scale_factor=40, mode='bilinear', align_corners=False)
         #print("raw_x.shape ", x.shape)
-        x = self.conv1(x)
+        x = F.interpolate(x, scale_factor=40, mode='bilinear', align_corners=False)
+        #x = self.RB(x)
         #print(x.shape)
         #x = self.maxpool(x)
-        x = self.layer1(x)
+        x = self.U(x)
         #print(x.shape)
+        '''
         x = self.layer2(x)
         #print(x.shape)
         x = self.layer3(x)
@@ -204,6 +322,8 @@ class PoseResNet(nn.Module):
         x = self.deconv_layers(x)
         #print(x.shape)
         x = self.final_layer(x)
+        '''
+        #print("output shape: ",x.shape)
         return x
 
     def init_weights(self, pretrained=''):

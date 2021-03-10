@@ -109,7 +109,6 @@ def pck(pred, target):
         for j in range(num_joint):
             if target[i][j][0] < 1 and target[i][j][1] < 1: # invisible
                 continue
-            
             dist = np.linalg.norm(target[i][j] - pred[i][j])
             for t in range(len(thr)):
                 whole_count[t][j] += 1

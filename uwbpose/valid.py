@@ -14,14 +14,14 @@ from visualize import *
 from inference import *
 from make_log import *
 from evaluate import *
+import resnet
 
 def prediction(model, rf, target_heatmap, criterion):
     out = model(rf)
+    #loss = criterion(out, target_heatmap)
 
-    loss = criterion(out, target_heatmap)
-
-    _, temp_avg_acc, cnt, pred = accuracy(out.detach().cpu().numpy(),
-            target_heatmap.detach().cpu().numpy())
+    #_, temp_avg_acc, cnt, pred = accuracy(out.detach().cpu().numpy(),
+    #        target_heatmap.detach().cpu().numpy())
 
     preds, maxvals = get_final_preds(out.clone().cpu().numpy())
 
@@ -29,7 +29,7 @@ def prediction(model, rf, target_heatmap, criterion):
 
     temp_true_det, temp_whole_cnt = pck(preds*4, target_label*4)
 
-    return out, loss, temp_avg_acc, cnt, preds, target_label, temp_true_det, temp_whole_cnt
+    return out, preds, target_label, temp_true_det, temp_whole_cnt #loss, temp_avg_acc, cnt, 
 
 def validate(dataloader, model, logger, criterion, debug_img=False):
     model.eval()
@@ -49,12 +49,12 @@ def validate(dataloader, model, logger, criterion, debug_img=False):
         if debug_img == True:
             for rf, target_heatmap, img in tqdm(dataloader):
                 rf, target_heatmap, img = rf.cuda(), target_heatmap.cuda(), img.cuda()
-                out, loss, temp_avg_acc, cnt, preds, target_label, temp_true_det, temp_whole_cnt = prediction(model, rf, target_heatmap, criterion)
+                out, preds, target_label, temp_true_det, temp_whole_cnt = prediction(model, rf, target_heatmap, criterion) #loss, temp_avg_acc, cnt, 
                 
-                epoch_loss.append(loss)
-                sum_acc += temp_avg_acc * cnt
-                total_cnt += cnt
-                avg_acc = sum_acc / total_cnt if total_cnt != 0 else 0
+                #epoch_loss.append(loss)
+                #sum_acc += temp_avg_acc * cnt
+                #total_cnt += cnt
+                #avg_acc = sum_acc / total_cnt if total_cnt != 0 else 0
                 true_detect += temp_true_det
                 whole_count += temp_whole_cnt
 
@@ -70,12 +70,12 @@ def validate(dataloader, model, logger, criterion, debug_img=False):
         else:
             for rf, target_heatmap in tqdm(dataloader):
                 rf, target_heatmap = rf.cuda(), target_heatmap.cuda()
-                out, loss, temp_avg_acc, cnt, preds, target_label, temp_true_det, temp_whole_cnt = prediction(model, rf, target_heatmap, criterion)
+                out, preds, target_label, temp_true_det, temp_whole_cnt = prediction(model, rf, target_heatmap, criterion) #loss, temp_avg_acc, cnt,
                 
-                epoch_loss.append(loss)
-                sum_acc += temp_avg_acc * cnt
-                total_cnt += cnt
-                avg_acc = sum_acc / total_cnt if total_cnt != 0 else 0
+                #epoch_loss.append(loss)
+                #sum_acc += temp_avg_acc * cnt
+                #total_cnt += cnt
+                #avg_acc = sum_acc / total_cnt if total_cnt != 0 else 0
                 true_detect += temp_true_det
                 whole_count += temp_whole_cnt
 
@@ -83,8 +83,8 @@ def validate(dataloader, model, logger, criterion, debug_img=False):
                 #    logger.info("iteration[%d] batch loss %.6f\tavg_acc %.4f\ttotal_count %d"%(iterate, loss.item(), avg_acc, total_cnt))
                 iterate += 1
         
-        logger.info("epoch loss : %.6f"%torch.tensor(epoch_loss).mean().item())
-        logger.info("epoch acc on test data : %.4f"%(avg_acc))
+        #logger.info("epoch loss : %.6f"%torch.tensor(epoch_loss).mean().item())
+        #logger.info("epoch acc on test data : %.4f"%(avg_acc))
         pck_res = true_detect / whole_count * 100
         thr = [0.1, 0.2, 0.3, 0.5]
         for t in range(4):
@@ -99,7 +99,7 @@ if __name__ == '__main__':
     #model_name = "210109_newdata_normalize_nlayer18_adam_lr0.001_batch32_momentum0.9_schedule[10, 20]_nepoch30"
     #model_name = "210112_mixup_nlayer18_adam_lr0.001_batch32_momentum0.9_schedule[10, 20]_nepoch30"
     #model_name = '210113_intensity_nlayer18_adam_lr0.001_batch32_momentum0.9_schedule[10, 20]_nepoch30'
-    model_name = '210119_hrnet_nlayer18_adam_lr0.001_batch16_momentum0.9_schedule[10, 20]_nepoch30_hrnet'
+    model_name = '210309_noresize_resnet_cutmix_nlayer18_adam_lr0.001_batch32_momentum0.9_schedule[7, 10]_nepoch12_resnet'
     if len(model_name) == 0:
         print("You must enter the model name for testing")
         sys.exit()
@@ -131,7 +131,7 @@ if __name__ == '__main__':
         if args.flatten:
             model = get_2d_pose_net(num_layer=args.nlayer, input_depth=1)
         else:
-            model = get_pose_net(num_layer=args.nlayer, input_depth=2048 - args.cutoff)
+            model = get_pose_net(num_layer=args.nlayer, input_depth=1)
 
     if multi_gpu is True:
         model = torch.nn.DataParallel(model).cuda()
@@ -157,7 +157,7 @@ if __name__ == '__main__':
     model_name = model_name + '_epoch{}.pt'
     # 원하는 모델 구간 지정해야함.
     #for i in range(20, 30):
-    for i in range(5, 10):
+    for i in range(7,12):
         logger.info("epoch %d"%i)
         logger.info('./save_model/' + model_name.format(i))
         model.module.load_state_dict(torch.load('./save_model/'+model_name.format(i)))

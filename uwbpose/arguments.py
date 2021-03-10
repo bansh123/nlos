@@ -4,10 +4,10 @@ import argparse
 def get_arguments():
     parser = argparse.ArgumentParser(description='RF Single Pose')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
-            help='learning rate ( default: 0.001) ')
+            help='learning rate ( default: 0.0005) ')
     parser.add_argument('--batch-size', type=int, default=32, metavar='N',
             help='input batch size for training (default: 32)')
-    parser.add_argument('--schedule', type=int, nargs='+', default=[10, 20],
+    parser.add_argument('--schedule', type=int, nargs='+', default=[7,10],
             help='learning rate scheduler. decay gamma at these epochs ')
     parser.add_argument('--gammas', type=float, default=0.1,
             help='gamma. LR decay ')
@@ -45,6 +45,7 @@ def get_arguments():
             choices=['cutmix',
                 'mixup',
                 'intensity',
+                'fft',
                 'all'],
             help='rf data augmentation')
 

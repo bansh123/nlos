@@ -18,6 +18,7 @@ import arguments
 from make_log import *
 from evaluate import *
 from loss import *
+import resnet
 
 args = arguments.get_arguments()
 
@@ -38,7 +39,6 @@ logger.info("saved model name "+model_name)
 
 arguments.print_arguments(args, logger)
 
-
 multi_gpu = args.multi_gpu
 set_gpu_num = args.gpu_num
 
@@ -54,7 +54,7 @@ else:
     if args.flatten:
         model = get_2d_pose_net(num_layer=args.nlayer, input_depth=1)
     else:
-        model = get_pose_net(num_layer=args.nlayer, input_depth=2048-args.cutoff)
+        model = get_pose_net(num_layer=args.nlayer, input_depth=1764)
 
 if multi_gpu is True:
     model = torch.nn.DataParallel(model).cuda()
@@ -88,7 +88,7 @@ train_dataloader = DataLoader(train_data, batch_size=args.batch_size, shuffle=Tr
 max_acc = 0
 max_acc_epoch = 0
 
-#name = 'save_model/201011_resnet18_SGD_lr0.001_batch32_momentum0.9_schedule[90, 110]_nepoch140_epoch88.pt'
+#name = './save_model/210306_mattew_cutmix_nlayer18_adam_lr0.0005_batch32_momentum0.9_schedule[4, 8]_nepoch10_resnet_epoch9.pt'
 #state_dict = torch.load(name)
 #model.module.load_state_dict(state_dict)
 begin_time = datetime.now()
@@ -106,7 +106,6 @@ for epoch in range(args.nepochs):
         #print(rf.shape, target_heatmap.shape)
         #print(rf.dtype, target_heatmap.dtype)
         rf, target_heatmap = rf.cuda(), target_heatmap.cuda()
-        
         out = model(rf)
         #loss = 0.5 * criterion(out, target_heatmap)
         loss = cr(out, target_heatmap)
