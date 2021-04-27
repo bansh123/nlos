@@ -218,19 +218,34 @@ class PoseResNet(nn.Module):
         self.deconv_with_bias = False
         super(PoseResNet, self).__init__()
         # ResNet
-        self.RB = BasicBlock(inplanes=1764, planes=150, stride=1)
-        self.U = U_Net()
-        '''
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(9, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False),
+        #self.RB = BasicBlock(inplanes=1764, planes=150, stride=1)
+        #self.U = U_Net()
+        self.conv0= nn.Sequential(
+            nn.ConvTranspose2d(1,64,kernel_size=[3,1],stride=[2,1],padding=2,bias=self.deconv_with_bias),
             nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
             nn.ReLU(inplace=True)
             )
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=[1,5], stride=[1,2], padding=[0,0], bias=False),
+            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
+            nn.ReLU(inplace=True)
+            )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=[1,5], stride=[1,2], padding=[0,0], bias=False),
+            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
+            nn.ReLU(inplace=True)
+            )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=[1,5], stride=[1,2], padding=[0,0], bias=False),
+            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
+            nn.ReLU(inplace=True)
+            )
+
         #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])            # Bottleneck 3
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2) # Bottleneck 4
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2) # Bottleneck 6
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2) # Bottlenect 3
+        self.layer1 = self._make_layer(block, 64, layers[0],stride=[1,2])            # Bottleneck 3
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=[1,2]) # Bottleneck 4
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=[1,2]) # Bottleneck 6
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=[1,2]) # Bottlenect 3
 
         # used for deconv layers   num_deconv_layers,  num_deconv_filters, num_deconv_kernels
         self.deconv_layers = self._make_deconv_layer(
@@ -246,7 +261,7 @@ class PoseResNet(nn.Module):
             stride=1,
             padding=0 # if FINAL_CONV_KERNEL = 3 else 1
         )
-        '''
+        
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
@@ -306,13 +321,22 @@ class PoseResNet(nn.Module):
 
     def forward(self, x):
         #print("raw_x.shape ", x.shape)
-        x = F.interpolate(x, scale_factor=40, mode='bilinear', align_corners=False)
+        #x = F.interpolate(x, scale_factor=40, mode='bilinear', align_corners=False)
         #x = self.RB(x)
         #print(x.shape)
         #x = self.maxpool(x)
-        x = self.U(x)
+        #x = self.U(x)
         #print(x.shape)
-        '''
+        x= self.conv0(x)
+        #print(x.shape)
+        x= self.conv1(x)
+        #print(x.shape)
+        x= self.conv2(x)
+        #print(x.shape)
+        x= self.conv3(x)
+        #print(x.shape)
+        x = self.layer1(x)
+        #print(x.shape)
         x = self.layer2(x)
         #print(x.shape)
         x = self.layer3(x)
@@ -322,7 +346,7 @@ class PoseResNet(nn.Module):
         x = self.deconv_layers(x)
         #print(x.shape)
         x = self.final_layer(x)
-        '''
+        
         #print("output shape: ",x.shape)
         return x
 

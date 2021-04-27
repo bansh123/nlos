@@ -25,7 +25,7 @@ class JointsMSELoss(nn.Module):
         #print(heatmaps_gt)
         for idx in range(num_joints):
             # batch x (w*h)
-            heatmap_pred = heatmaps_pred[idx].squeeze()
+            heatmap_pred = heatmaps_pred[idx].squeeze()            
             heatmap_gt = heatmaps_gt[idx].squeeze()
             target_weight = (torch.max(heatmap_gt, dim=1)[0] > 0).float().reshape(-1, 1)
             mattew_weight = (0.3 + heatmap_gt)**0.5

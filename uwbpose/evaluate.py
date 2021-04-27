@@ -94,7 +94,6 @@ def pck(pred, target):
         # left shoulder + right_hip,   or   right shoulder + left hip
         #torso = 0
         check = 0
-        
         if target[i][2][0] >= 1 and target[i][2][1] >= 1 and target[i][7][0] >= 1 and target[i][7][1] >= 1: # right shoulder + left hip
             check = 1
             torso = np.linalg.norm(target[i][2] - target[i][7])

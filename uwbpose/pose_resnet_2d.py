@@ -63,7 +63,7 @@ class U_Net(nn.Module):
     UNet - Basic Implementation
     Paper : https://arxiv.org/abs/1505.04597
     """
-    def __init__(self, in_ch=9, out_ch=13):
+    def __init__(self, in_ch=1, out_ch=1):
         super(U_Net, self).__init__()
 
         n1 = 64
@@ -98,33 +98,29 @@ class U_Net(nn.Module):
     def forward(self, x):
 
         e1 = self.Conv1(x)
-
         e2 = self.Maxpool1(e1)
         e2 = self.Conv2(e2)
-
+        
         e3 = self.Maxpool2(e2)
         e3 = self.Conv3(e3)
-
+        
         e4 = self.Maxpool3(e3)
         e4 = self.Conv4(e4)
-
+        
         d4 = self.Up4(e4)
         d4 = torch.cat((e3,d4),dim=1)
-
+        
         d4 = self.Up_conv4(d4)
-
+        
         d3 = self.Up3(d4)
         d3 = torch.cat((e2, d3), dim=1)
         d3 = self.Up_conv3(d3)
-
+        
         d2 = self.Up2(d3)
         d2 = torch.cat((e1, d2), dim=1)
         d2 = self.Up_conv2(d2)
-
+        
         out = self.Conv(d2)
-
-        #d1 = self.active(out)
-
         return out
 
 class BasicBlock(nn.Module):
@@ -199,18 +195,135 @@ class Bottleneck(nn.Module):
 
         return out
 
+class ResNet(nn.Module):
+    def __init__(self, block, num_blocks, num_classes=2):
+        super(ResNet, self).__init__()
+        self.inplanes = 64
+        self.conv1 = nn.Conv2d(2, 64, kernel_size=3,
+                               stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=1)
+        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        self.linear = nn.Sequential(
+            nn.Linear(512*25, 512*5),
+            nn.ReLU(inplace=True),
+            nn.Linear(512*5, 2),
+        )
+        
+
+    def _make_layer(self, block, planes, blocks, stride):
+        downsample = None
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes * block.expansion, momentum=BN_MOMENTUM),
+            )
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes * block.expansion
+        for i in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = F.avg_pool2d(out, 3)
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
+class Discriminator2(nn.Module):
+    """Discriminator model for source domain."""
+
+    def __init__(self, input_dims, hidden_dims, output_dims):
+        """Init discriminator."""
+        super(Discriminator2, self).__init__()
+
+        self.layer = nn.Sequential(
+            nn.Linear(2048, 1012),
+            nn.ReLU(),
+            nn.Linear(1012, 1012),
+            nn.ReLU(),
+            nn.Linear(1012, 1),
+        )
+
+    def forward(self, x):
+        """Forward the discriminator."""
+        #x = self.conv1(x)
+        #x = self.conv2(x)
+        out = x.view(x.size(0), -1)
+        out = self.layer(out)
+        return out
+
+class Class_ResNet(nn.Module):    
+    def __init__(self, block, layers):
+        self.inplanes = 64
+        self.deconv_with_bias = False
+        print("---------------flatten pose net---------------")
+        super(Class_ResNet, self).__init__()
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(self.inplanes, momentum=BN_MOMENTUM),
+            nn.ReLU(inplace=True),
+        )
+        self.layer1 = self._make_layer(block, 64, layers[0],stride=1)  # Bottleneck 3
+        self.layer2 = self._make_layer(block, 128, layers[1],stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)  # Bottleneck 6
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)  # Bottlenect 3
+        self.linear = nn.Linear(512*25, 512*5)
+        self.relu=nn.ReLU(inplace=True)
+        self.linear2 = nn.Linear(512*5, 9)
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes * block.expansion, momentum=BN_MOMENTUM),
+            )
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes * block.expansion
+        for i in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x) 
+        x = self.layer4(x)
+        x = x.view(x.size(0), -1)
+        out = self.linear(x)
+        out2 = self.relu(out)
+        out2 = self.linear2(out2)
+        return out2
+
 
 class PoseResNet(nn.Module):
-
-    def __init__(self, block, layers, **kwargs):
+    def __init__(self, block, layers):
         self.inplanes = 64
         self.deconv_with_bias = False
         print("---------------flatten pose net---------------")
         super(PoseResNet, self).__init__()
         # ResNet
         #print(INPUT_D, self.inplanes)
+        '''
+        self.U = U_Net()
+        self.D = ResNet(BasicBlock, [2, 2, 2, 2])
+        '''
         self.conv1 = nn.Sequential(
-            nn.Conv2d(INPUT_D, self.inplanes, kernel_size=4, stride=1, padding=0, bias=False),
+            nn.Conv2d(1, self.inplanes, kernel_size=4, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(self.inplanes, momentum=BN_MOMENTUM),
             nn.ReLU(inplace=True),
             nn.Conv2d(self.inplanes, self.inplanes, kernel_size=4, stride=1, padding=0, bias=False),
@@ -220,123 +333,9 @@ class PoseResNet(nn.Module):
         #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0],stride=1)  # Bottleneck 3
         self.layer2 = self._make_layer(block, 128, layers[1],stride=2)
-        '''
-        self._1st_BB = BasicBlock(64,64)
-
-        self._1st_conv1to1 = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-        )
-        self._1st_conv1to2 = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(128, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-        )
-
-        self._2nd_BB1 = BasicBlock(64,64)
-        self._2nd_BB2 = BasicBlock(128,128)
-        self._2nd_conv1to2= nn.Sequential(
-            nn.Conv2d(64,128,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(128, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-            )
-        self._2nd_conv1to3= nn.Sequential(
-            nn.Conv2d(64,128,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(128, momentum=BN_MOMENTUM),
-            nn.Conv2d(128,256,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-            )    
-        self._2nd_conv2to1 = nn.Sequential(
-            nn.Conv2d(128,64,kernel_size=1,stride=1,padding=0,bias=False),
-            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            )
-        self._2nd_conv2to3 = nn.Sequential(
-            nn.Conv2d(128,256,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-        )
-        self._3rd_BB1 = BasicBlock(64,64)
-        self._3rd_BB2 = BasicBlock(128,128)
-        self._3rd_BB3 = BasicBlock(256,256)
-        self._3rd_conv1to2= nn.Sequential(
-            nn.Conv2d(64,128,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(128, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-            )
-        self._3rd_conv1to3= nn.Sequential(
-            nn.Conv2d(64,128,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(128, momentum=BN_MOMENTUM),
-            nn.Conv2d(128,256,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-            )
-        self._3rd_conv1to4= nn.Sequential(
-            nn.Conv2d(64,128,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(128, momentum=BN_MOMENTUM),
-            nn.Conv2d(128,256,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
-            nn.Conv2d(256,512,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(512, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-            )
-        self._3rd_conv2to1 = nn.Sequential(
-            nn.Conv2d(128,64,kernel_size=1,stride=1,padding=0,bias=False),
-            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            )
-        self._3rd_conv2to3 = nn.Sequential(
-            nn.Conv2d(128,256,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-        )
-        self._3rd_conv2to4 = nn.Sequential(
-            nn.Conv2d(128,256,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
-            nn.Conv2d(256,512,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(512, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-        )
-        self._3rd_conv3to1 = nn.Sequential(
-            nn.Conv2d(256,64,kernel_size=1,stride=1,padding=0,bias=False),
-            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
-            nn.Upsample(scale_factor=4, mode='nearest'),
-            )
-        self._3rd_conv3to2 = nn.Sequential(
-            nn.Conv2d(256,128,kernel_size=1,stride=1,padding=0,bias=False),
-            nn.BatchNorm2d(128, momentum=BN_MOMENTUM),
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            )
-        self._3rd_conv3to4 = nn.Sequential(
-            nn.Conv2d(256,512,kernel_size=3,stride=2,padding=1,bias=False),
-            nn.BatchNorm2d(512, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True),
-            )
-
-        self._4th_BB1 = BasicBlock(64,64)
-        self._4th_BB2 = BasicBlock(128,128)
-        self._4th_BB3 = BasicBlock(256,256)
-        self._4th_BB4 = BasicBlock(512,512)
-        self._4th_conv2to1 = nn.Sequential(
-            nn.Conv2d(128,64,kernel_size=1,stride=1,padding=0,bias=False),
-            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            )
-        self._4th_conv3to1 = nn.Sequential(
-            nn.Conv2d(256,64,kernel_size=1,stride=1,padding=0,bias=False),
-            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
-            nn.Upsample(scale_factor=4, mode='nearest'),
-            )
-        self._4th_conv4to1 = nn.Sequential(
-            nn.Conv2d(512,64,kernel_size=1,stride=1,padding=0,bias=False),
-            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
-            nn.Upsample(scale_factor=8, mode='nearest'),
-            )
-        '''
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)  # Bottleneck 6
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)  # Bottlenect 3
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        #self.layer5 = nn.Linear(3200, 2048)
         # used for deconv layers   num_deconv_layers,  num_deconv_filters, num_deconv_kernels
         self.deconv_layer = self._make_deconv_layer(
             3,  # NUM_DECONV_LAYERS
@@ -373,9 +372,9 @@ class PoseResNet(nn.Module):
             padding = 1
             output_padding = 0
         elif deconv_kernel == 3:
-            padding = 1
-            output_padding = 1
-        elif deconv_kernel == 2:
+            padding = 0
+            output_padding = 0
+        elif deconv_kernel == 5:
             padding = 0
             output_padding = 0
 
@@ -386,19 +385,24 @@ class PoseResNet(nn.Module):
             'ERROR: num_deconv_layers is different len(num_deconv_filters)'
         assert num_layers == len(num_kernels), \
             'ERROR: num_deconv_layers is different len(num_deconv_filters)'
-
         layers = []
+        s = 2
         for i in range(num_layers):
             kernel, padding, output_padding = \
                 self._get_deconv_cfg(num_kernels[i], i)
-
+            '''
+            if i==0:
+                s=3
+            else:
+                s=2
+            '''
             planes = num_filters[i]
             layers.append(
                 nn.ConvTranspose2d(
                     in_channels=self.inplanes,
                     out_channels=planes,
                     kernel_size=kernel,
-                    stride=2,
+                    stride=s,
                     padding=padding,
                     output_padding=output_padding,
                     bias=self.deconv_with_bias))
@@ -410,61 +414,101 @@ class PoseResNet(nn.Module):
 
     def forward(self, x):
         # x = F.interpolate(x, scale_factor=40, mode='bilinear', align_corners=False)
-        #print("raw shape: ",x.shape)
+        #print("raw shape: ",x1.shape)
+        '''
+        x1 = self.U(x1)
+        x2 = self.U(x2)
+        #print("after U shape: ",x1.shape)
+        x3 = torch.cat([x1,x2],dim=1)
+        out1 = self.D(x3)
+        #print("D out1 shape : ",out1.shape)
+        x1 = self.conv1(x1)
+        x1 = self.layer1(x1)
+        x1 = self.layer2(x1)
+        x1 = self.layer3(x1) 
+        x1 = self.layer4(x1)
+        x1 = self.deconv_layer(x1)
+        x1 = self.final_layer(x1)
+
+        x2 = self.conv1(x2)
+        x2 = self.layer1(x2)
+        x2 = self.layer2(x2)
+        x2 = self.layer3(x2) 
+        x2 = self.layer4(x2)
+        x2 = self.deconv_layer(x2)
+        x2 = self.final_layer(x2)
+        #print("out2 shape: ",x1.shape)
+        return out1,x1,x2
+        '''
+        #x = self.U(x)        
         x = self.conv1(x)
-        '''
-        #print(x.shape)
-        x = self._1st_BB(x)
-        x1 = self._1st_conv1to1(x)
-        x2 = self._1st_conv1to2(x)
-        
-        x1 = self._2nd_BB1(x1)
-        x2 = self._2nd_BB2(x2)
-        #print(x1.shape)
-        #print(x2.shape)
 
-        y1 = x1+self._2nd_conv2to1(x2)
-        y2 = self._2nd_conv1to2(x1)+x2
-        y3 = self._2nd_conv1to3(x1)+self._2nd_conv2to3(x2)
-
-        y1 = self._3rd_BB1(y1)
-        y2 = self._3rd_BB2(y2)
-        y3 = self._3rd_BB3(y3)
-        #print(y1.shape)
-        #print(y2.shape)
-        #print(y3.shape)
-
-        z1 = y1+self._3rd_conv2to1(y2)+self._3rd_conv3to1(y3)
-        z2 = self._3rd_conv1to2(y1)+y2+self._3rd_conv3to2(y3)
-        z3 = self._3rd_conv1to3(y1)+self._3rd_conv2to3(y2)+y3
-        z4 = self._3rd_conv1to4(y1)+self._3rd_conv2to4(y2)+self._3rd_conv3to4(y3)
-
-        z1 = self._4th_BB1(z1)
-        z2 = self._4th_BB2(z2)
-        z3 = self._4th_BB3(z3)
-        z4 = self._4th_BB4(z4)
-
-        #print(z1.shape)
-        #print(z2.shape)
-        #print(z3.shape)
-        #print(z4.shape)
-
-        out = z1+self._4th_conv2to1(z2)+self._4th_conv3to1(z3)+self._4th_conv4to1(z4)
-        out = self.final_layer(out)
-        '''
-        #x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x) 
         x = self.layer4(x)
+        
+        #x = x.view(x.size(0), -1)
+        #x = self.layer5(x)
+        #x = x.view(x.size(0),2048,1,1)
+        
         x = self.deconv_layer(x)
+        
         x = self.final_layer(x)
-        #print("output shape: ",x.shape)
+        
         return x
 
     def init_weights(self, pretrained=''):
         pass
 
+class ADDAEncoder(nn.Module):
+    def __init__(self, block, layers):
+        self.inplanes = 64
+        self.deconv_with_bias = False
+        print("---------------flatten pose net---------------")
+        super(ADDAEncoder, self).__init__()
+        #print(INPUT_D, self.inplanes)
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(self.inplanes, momentum=BN_MOMENTUM),
+            nn.ReLU(inplace=True),
+        )
+        #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(block, 64, layers[0],stride=1)  # Bottleneck 3
+        self.layer2 = self._make_layer(block, 64, layers[1],stride=2)
+        self.layer3 = self._make_layer(block, 128, layers[2], stride=2)  # Bottleneck 6
+        self.layer4 = self._make_layer(block, 128, layers[3], stride=2)
+        self.layer5 = nn.Linear(3200, 2048)
+        
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes * block.expansion, momentum=BN_MOMENTUM),
+            )
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes * block.expansion
+        for i in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x) 
+        x = self.layer4(x)
+        x = x.view(x.size(0), -1)
+        x = self.layer5(x)
+        return x
+
+    def init_weights(self, pretrained=''):
+        pass
 
 resnet_spec = {18: (BasicBlock, [2, 2, 2, 2]),
                34: (BasicBlock, [3, 4, 6, 3]),
@@ -473,7 +517,7 @@ resnet_spec = {18: (BasicBlock, [2, 2, 2, 2]),
                152: (Bottleneck, [3, 8, 36, 3])}
 
 
-def get_2d_pose_net(num_layer, input_depth, **kwargs):
+def get_2d_pose_net(num_layer, input_depth):
     global INPUT_D
     INPUT_D = input_depth
     num_layers = num_layer
@@ -481,9 +525,31 @@ def get_2d_pose_net(num_layer, input_depth, **kwargs):
 
     # model = PoseResNet(block_class, layers, cfg, **kwargs)
 
-    model = PoseResNet(block_class, layers, **kwargs)
+    model = PoseResNet(block_class, layers)
 
     # if is_train and cfg.MODEL.INIT_WEIGHTS:
     #    model.init_weights(cfg.MODEL.PRETRAINED)
     # model.init_weights('models/imagenet/resnet50-19c8e357.pth')
+    return model
+
+def get_Discriminator():
+    '''
+    num_layers = num_layer
+    block_class, layers = resnet_spec[num_layers]
+    model = ResNet(block_class,layers)
+    '''
+    model = Discriminator2(12800,1600,2)
+    return model
+
+def get_encoder(num_layer, input_depth):
+    num_layers = num_layer
+    block_class, layers = resnet_spec[num_layers]
+    model = ADDAEncoder(block_class,layers)
+    return model
+
+
+def get_Classifier(num_layer):
+    num_layers = num_layer
+    block_class, layers = resnet_spec[num_layers]
+    model = Class_ResNet(block_class,layers)
     return model

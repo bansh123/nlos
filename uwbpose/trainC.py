@@ -18,7 +18,8 @@ import arguments
 from make_log import *
 from evaluate import *
 from loss import *
-
+from cutmix.utils import CutMixCrossEntropyLoss
+import resnet
 
 args = arguments.get_arguments()
 
@@ -48,14 +49,7 @@ else:
     print("cpu")
     
 #----- model -----
-if args.arch =='hrnet':
-    model = get_pose_hrnet()
-else:
-    if args.flatten:
-        model = get_2d_pose_net(num_layer=args.nlayer, input_depth=1)
-        #model = get_Classifier(num_layer=args.nlayer)
-    else:
-        model = get_pose_net(num_layer=args.nlayer, input_depth=1764)
+model = get_Classifier(num_layer=args.nlayer)
 
 if multi_gpu is True:
     model = torch.nn.DataParallel(model).cuda()
@@ -63,7 +57,11 @@ if multi_gpu is True:
 else:
     torch.cuda.set_device(set_gpu_num)
     logger.info("Let's use single gpu\t now gpu : {}".format(set_gpu_num))
-    #model.cuda()
+    #model.load_state_dict(torch.load('./save_model/Generator_nlayer18_adam_lr0.001_batch32_momentum0.9_schedule[10, 20]_nepoch10_resnet_epoch0.pt'))
+    #model.D.load_state_dict(torch.load('./save_model/Discriminator.pt'))
+    #for param in model.D.parameters():
+    #    param.requires_grad = False
+    model.cuda()
     model = torch.nn.DataParallel(model, device_ids = [set_gpu_num]).cuda()
 #model.cuda() # torch.cuda_set_device(device) 로 send
 #model.to(device) # 직접 device 명시
@@ -88,12 +86,13 @@ train_dataloader = DataLoader(train_data, batch_size=args.batch_size, shuffle=Tr
 #----- training -----
 max_acc = 0
 max_acc_epoch = 0
-
-#name = './save_model/210413_3*3_1d_nlayer18_adam_lr0.0001_batch32_momentum0.9_schedule[]_nepoch10_resnet_epoch9.pt'
+#name = './save_model/210414_classifier_1x1_1d_25_cutmix_nlayer18_adam_lr0.0001_batch64_momentum0.9_schedule[]_nepoch150_resnet_epoch149.pt'
 #state_dict = torch.load(name)
 #model.module.load_state_dict(state_dict)
 begin_time = datetime.now()
 print(begin_time)
+clos = CutMixCrossEntropyLoss(True)
+celos = nn.CrossEntropyLoss()
 for epoch in range(args.nepochs):
     logger.info("Epoch {}\tcurrent lr : {} {}".format(epoch, optimizer.param_groups[0]['lr'], lr_scheduler.get_last_lr()))
     epoch_loss = []
@@ -101,31 +100,27 @@ for epoch in range(args.nepochs):
     sum_acc = 0
     total_cnt = 0
     iterate = 0
-
-    for rf, target_heatmap in tqdm(train_dataloader):
+    for rf,gt in tqdm(train_dataloader): #
         #print(rf.shape, target_heatmap.shape)
         #print(rf.dtype, target_heatmap.dtype)
-        rf, target_heatmap = rf.cuda(), target_heatmap.cuda()
-        out = model(rf)
-        #loss = 0.5 * criterion(out, target_heatmap)
-        loss = cr(out, target_heatmap)
+        rf,gt=rf.cuda(),gt.cuda()
+        out = model(rf) #out0,out00,
+        loss = clos(out,gt.squeeze())
+        #loss = celos(out, gt.squeeze())
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
         epoch_loss.append(loss)
-        _, temp_avg_acc, cnt, pred = accuracy(out.detach().cpu().numpy(),
-                target_heatmap.detach().cpu().numpy())
-        sum_acc += temp_avg_acc * cnt
-        total_cnt += cnt
-        avg_acc = sum_acc / total_cnt if total_cnt != 0 else 0
         if iterate % 500 == 0:
-            logger.info("iteration[%d] batch loss %.6f\tavg_acc %.4f\ttotal_count %d"%(iterate, loss.item(), avg_acc, total_cnt))
+            c=torch.argmax(out, dim=1)
+            d=torch.argmax(gt.squeeze(),dim=1)
+            acc=torch.sum(d==c)/len(gt)
+            logger.info("iteration[%d] batch loss %.6f\tC_acc %.4f\ttotal_count %d\t"%(iterate, loss.item(),acc, total_cnt))
         iterate += 1
 
     logger.info("epoch loss : %.6f"%torch.tensor(epoch_loss).mean().item())
-    logger.info("epoch acc on train data : %.4f"%(avg_acc))
     
+    '''
     if avg_acc > max_acc:
         logger.info("epoch {} acc {} > max acc {} epoch {}".format(epoch, avg_acc, max_acc, max_acc_epoch))
         max_acc = avg_acc
@@ -134,6 +129,7 @@ for epoch in range(args.nepochs):
         torch.save(model.module.state_dict(), "save_model/" + model_name + "_best.pt")
         #else:
             #torch.save(model.state_dict(), "save_model/" + model_name + "_best.pt")
+    '''
     lr_scheduler.step()
     #if args.multi_gpu == 1:
     torch.save(model.module.state_dict(), "save_model/" + model_name + "_epoch{}.pt".format(epoch))

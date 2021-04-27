@@ -10,8 +10,12 @@ import numpy as np
 import time
 import cv2
 import random
+import copy
+from generator import *
 from scipy import signal
 
+#g = torch.load("final_2d_2500_5class.pt",map_location=torch.device('cpu'))
+#g.eval()
 class PoseDataset(Dataset):
     def __init__(self, args, is_correlation=False, mode='train'):
         
@@ -43,9 +47,11 @@ class PoseDataset(Dataset):
             self.input_size= 128
         else:
             self.input_size = 120
-
         data_path = '/data/nlos/save_data_ver2'
         data_path2 = '/home/bansh123/deep-high-resolution-net.pytorch/gt/'
+
+        #g = torch.load("final_pose4_g.pt",map_location=torch.device('cpu'))
+        #g.eval()
         #data_path_list = os.listdir(data_path)
         data_path_list = glob.glob(data_path + '/*')
         data_path_list2 = glob.glob(data_path2 + '/*')
@@ -58,11 +64,12 @@ class PoseDataset(Dataset):
         img_list = []
         print("start - data read")
         #test_dir = [8, 9] # past version - 1
-        test_dir = [2,5,10,14,16,19] # cur version - 2 : 2, 5, 10, 14, 16, 19
+        train_dir = [0,1,6,7,8,9,11,12,13,15,17,18,20]  #0,2,3,5,6,8,12,13,20
+        test_dir = [2, 5, 10, 14, 16, 19] # cur version - 2 : 2, 5, 10, 14, 16, 19    // 0,2,6,8,13,15,17,18,16   1,7,20,9,10,11,12,5,14,19  1,7,20,9,10,12,5,14,16,19,21,22,23,24,25,26,27,28,29
         #test_dir = [2, 5, 10] # los
         #test_dir = [14, 16, 19]  #nlos
         #test_dir = [10, 19] # demo - with mask  ,  los , nlos
-        remove_dir = [3, 4] 
+        remove_dir = [3,4]
         #valid_dir = [25, 26, 27]
         #valid_dir = [21]
         #valid_dir = [28, 29] # nlos wall
@@ -71,19 +78,31 @@ class PoseDataset(Dataset):
         dir_count = 0
         rf_index = 0
         if mode == 'train':
-            outlier_list = range(49500, 50000)
+            outlier_list = []
+            #outlier_list = range(0,2500)
+            #outlier_list2 = range(0,2500)
         else:
-            outlier_list = range(18000, 19000)
+            outlier_list = []
+            #l = []
+            #l.extend(range(4000,10000))
+            #l.extend(range(0,4000,200))
+            #outlier_list = l
+            #random.seed(7)
+            #outlier_list = random.sample(range(3000,5000),1000)
+            #a = range(3000,5000)
+            #outlier_list2 = [x for x in a if x not in outlier_list]
+        
         rf_index = -1
         gt_index = -1
         img_index = -1
 
-        for file, file2 in zip(data_path_list,data_path_list2):
+        for file,file2 in zip(data_path_list,data_path_list2):
+            rf_index= -1
+            gt_index= -1
             if dir_count in remove_dir:
                 dir_count += 1
                 continue
-
-            if mode == 'train' and (dir_count in test_dir or dir_count in valid_dir):
+            if mode == 'train' and dir_count not in train_dir:
                 dir_count += 1
                 continue
             elif mode == 'test' and dir_count not in test_dir:
@@ -92,22 +111,78 @@ class PoseDataset(Dataset):
             elif mode == 'valid' and dir_count not in valid_dir:
                 dir_count += 1
                 continue
-
+            
+            #D_gt = torch.zeros(1,9)
+            '''
+            if dir_count ==0:
+                D_gt=0
+            elif dir_count ==2:
+                D_gt=1
+            elif dir_count ==3:
+                D_gt=2
+            elif dir_count ==5:
+                D_gt=3
+            elif dir_count ==6:
+                D_gt=4
+            elif dir_count ==8:
+                D_gt=5
+            elif dir_count ==12:
+                D_gt=6
+            elif dir_count ==13:
+                D_gt=7
+            elif dir_count==20:
+                D_gt=8
+            '''
+            '''
+            if dir_count ==0:
+                D_gt[0][0]=1
+            elif dir_count ==2:
+                D_gt[0][1]=1
+            elif dir_count ==3:
+                D_gt[0][2]=1
+            elif dir_count ==5:
+                D_gt[0][3]=1
+            elif dir_count ==6:
+                D_gt[0][4]=1
+            elif dir_count ==8:
+                D_gt[0][5]=1
+            elif dir_count ==12:
+                D_gt[0][6]=1
+            elif dir_count ==13:
+                D_gt[0][7]=1
+            elif dir_count==20:
+                D_gt[0][8]=1
+            '''
+            '''
+            D_gt = torch.zeros(1,4)
+            if dir_count ==8:
+                D_gt[0][0]=1
+            elif dir_count ==12:
+                D_gt[0][1]=1
+            elif dir_count ==13:
+                D_gt[0][2]=1
+            elif dir_count==20:
+                D_gt[0][3]=1
+            '''
             if os.path.isdir(file) is True:
                 # 각 폴더 안의 npy 데이터
                 rf_file_list = glob.glob(file + '/raw/*.npy')
                 rf_file_list = sorted(rf_file_list)
                 print('dir(raw):', file, '\t# of data :', len(rf_file_list))
+                gt_file_list = glob.glob(file2 + '/gt/*')
+                gt_file_list = sorted(gt_file_list)
+                print('dir(gt):', file2, '\t# of data :', len(gt_file_list))
                 #print(rf_file_list)
-                for rf in rf_file_list:
+                for rf,gt in zip(rf_file_list,gt_file_list):
                     rf_index += 1
-                    if rf_index in outlier_list:
+                    if mode=='train' and rf_index in outlier_list:
                         continue
-                    temp_raw_rf = np.load(rf)[:, :, 284:]
-                    
-                    if self.augmentation=='fft':
-                        rf_data.append(temp_raw_rf)
+                    if mode == 'test' and rf_index in outlier_list:
                         continue
+                    #if dir_count ==16:
+                    #    if rf_index not in range(2450,2550):
+                    #        continue
+                    temp_raw_rf = np.load(rf)[:,:, 256:1056]
                     #print("raw shape", temp_raw_rf.shape)
                     #----- normalization ------
                     if self.is_normalize is True:
@@ -115,87 +190,34 @@ class PoseDataset(Dataset):
                             for j in range(temp_raw_rf.shape[1]):
                                 stdev = np.std(temp_raw_rf[i, j])
                                 temp_raw_rf[i, j] = temp_raw_rf[i, j]/stdev
-                    
-                    #temp_raw_rf = np.transpose(temp_raw_rf, (2, 1, 0)).transpose(0, 2, 1)
-                    #temp_raw_rf = torch.tensor(temp_raw_rf).float()    
                     #---------- 2차원으로 만들기 -----------
                     if self.flatten:
-                        '''
-                        ix=1
-                        s = torch.zeros((9,1764))
-                        t = torch.zeros((9,1764))
-                        for p in range(3):
-                            for q in range(3):
-                                fft= np.fft.fft(temp_raw_rf[p,q,:]/1764)
-                                x=torch.tensor(abs(fft))
-                                y=torch.tensor(np.angle(fft))
-                                s[ix-1]=x
-                                t[ix-1]=y
-                                ix+=1
-                        s = torch.cat([s[:,:126],s[:,126:126*2],s[:,126*2:126*3],s[:,126*3:126*4],s[:,126*4:126*5],s[:,126*5:126*6],s[:,126*6:126*7],s[:,126*7:126*8],s[:,126*8:126*9],s[:,126*9:126*10],s[:,126*10:126*11],s[:,126*11:126*12],s[:,126*12:126*13],s[:,126*13:126*14]])
-                        t = torch.cat([t[:,:126],t[:,126:126*2],t[:,126*2:126*3],t[:,126*3:126*4],t[:,126*4:126*5],t[:,126*5:126*6],t[:,126*6:126*7],t[:,126*7:126*8],t[:,126*8:126*9],t[:,126*9:126*10],t[:,126*10:126*11],t[:,126*11:126*12],t[:,126*12:126*13],t[:,126*13:126*14]])
-                        s = resize_transform(s)
-                        t = resize_transform(t)
-                        s = s.squeeze(0)
-                        t = t.squeeze(0)
-                        d = torch.stack([s,t])
-                        '''
-
-                        '''
-                        resize_transform = transforms.Compose(
-                            [transforms.ToPILImage(),
-                             transforms.Resize((120, 120)),
-                             transforms.ToTensor()]
-                        )
-                        ix=1
-                        s = torch.zeros((9,6,241,241))
-                        t = torch.zeros((6,120,120))
-                        arr = [0,21,42,84,126,189,882]
-                        for p in range(3):
-                            for q in range(3):
-                                fft= np.fft.fft(temp_raw_rf[p,q,:])
-                                X=abs(fft)
-                                X /= np.mean(X)
-                                X= torch.tensor(X).float()
-                                a=np.array(np.clip(np.around(fft.real+120),0,240),dtype=np.int)
-                                b=np.array(np.clip(np.around(fft.imag+120),0,240),dtype=np.int)
-                                for r in range(6):
-                                    s[ix-1,r,a[arr[r]:arr[r+1]],b[arr[r]:arr[r+1]]] += X[arr[r]:arr[r+1]]*0.01
-                                ix+=1
-                        s2 = s.sum(0)
-                        for i in range(6):
-                            t[i]=resize_transform(s2[i])
-                        '''
-                        #t=torch.zeros(9,120,120)
                         temp_raw_rf= torch.tensor(temp_raw_rf).float()
-                        temp_raw_rf= temp_raw_rf.view(-1,1764)
-                        #np.random.seed()
-                        #arr=np.random.permutation(14)*126
-                        temp_raw_rf = torch.cat([temp_raw_rf[:,:126],temp_raw_rf[:,126:126*2],temp_raw_rf[:,126*2:126*3],temp_raw_rf[:,126*3:126*4],temp_raw_rf[:,126*4:126*5],temp_raw_rf[:,126*5:126*6],temp_raw_rf[:,126*6:126*7],temp_raw_rf[:,126*7:126*8],temp_raw_rf[:,126*8:126*9],temp_raw_rf[:,126*9:126*10],temp_raw_rf[:,126*10:126*11],temp_raw_rf[:,126*11:126*12],temp_raw_rf[:,126*12:126*13],temp_raw_rf[:,126*13:126*14]])
-                        #temp_raw_rf = torch.cat([temp_raw_rf[:,arr[0]:arr[0]+126],temp_raw_rf[:,arr[1]:arr[1]+126],temp_raw_rf[:,arr[2]:arr[2]+126],temp_raw_rf[:,arr[3]:arr[3]+126],temp_raw_rf[:,arr[4]:arr[4]+126],temp_raw_rf[:,arr[5]:arr[5]+126],temp_raw_rf[:,arr[6]:arr[6]+126],temp_raw_rf[:,arr[7]:arr[7]+126],temp_raw_rf[:,arr[8]:arr[8]+126],temp_raw_rf[:,arr[9]:arr[9]+126],temp_raw_rf[:,arr[10]:arr[10]+126],temp_raw_rf[:,arr[11]:arr[11]+126],temp_raw_rf[:,arr[12]:arr[12]+126],temp_raw_rf[:,arr[13]:arr[13]+126]])
-                        temp_raw_rf= temp_raw_rf.unsqueeze(0)
-                        '''
-                        resize_transform = transforms.Compose(
-                            [transforms.ToPILImage(),
-                             transforms.Resize((120, 120)),
-                             transforms.ToTensor()]
-                        )
-                        temp_raw_rf=resize_transform(temp_raw_rf)
-                        '''
-                        #for i in range(9):
-                        #    t[i]=resize_transform(temp_raw_rf[i].view(-1,42))
-                        #temp_raw_rf = resize_transform(temp_raw_rf)
-                    #print("now shape",temp_raw_rf.shape)
+                        temp_raw_rf= temp_raw_rf.view(-1,800)
+                        
                     rf_data.append(temp_raw_rf)
-
+                    #gt_list.append(gt)
+                    temp_gt = np.load(gt)
+                    temp_gt = torch.tensor(temp_gt).float()
+                    gt_list.append(temp_gt)
+                    '''
+                    for i in range(40):
+                        z = torch.randn((1,400))
+                        z = z.float()
+                        temp=temp_raw_rf.view(40,40)
+                        with torch.no_grad():
+                            res = g(temp.unsqueeze(0).unsqueeze(0),z)
+                            res = res[0]
+                        res=res.squeeze()
+                        res=res.view(-1,1600)
+                        rf_data.append(res)
+                        gt_list.append(D_gt)
+                    '''
                 #break
                 '''
                 ground truth data 읽어오기.
                 heatmap 형태. 총 데이터의 개수* keypoint * width * height
                 '''
-                gt_file_list = glob.glob(file2 + '/gt/*')
-                gt_file_list = sorted(gt_file_list)
-                print('dir(gt):', file2, '\t# of data :', len(gt_file_list))
                 #np_load_old = np.load
                 #np.load = lambda *a,**k: np_load_old(*a, allow_pickle=True, **k)
                 #----- gt 메모리에 올려놓기 -----
@@ -207,11 +229,22 @@ class PoseDataset(Dataset):
                     gt_list.append(temp_gt)
                 """
                 #----- gt 파일 이름명만 리스트에 넣어놓기 -----
+                self.load_img = False
+                '''
                 for gt in gt_file_list:
                     gt_index += 1
-                    if gt_index in outlier_list:
+                    if mode == 'train' and gt_index not in outlier_list:
                         continue
-                    gt_list.append(gt)
+                    if mode == 'test' and gt_index in outlier_list:
+                        continue
+                    temp_gt = np.load(gt)
+                    temp_gt = torch.tensor(temp_gt).float()
+                    gt_list.append(temp_gt)
+                    #gt_list.append(D_gt)
+                    #for i in range(39):
+                    #    gt_list.append(D_gt)
+                ''' 
+                    #gt_list.append([D_gt,gt])
                 #np.load = np_load_old
                 if self.load_img is True:
                     img_file_list = glob.glob(file + '/img/*.jpg')
@@ -242,33 +275,36 @@ class PoseDataset(Dataset):
         if self.mode == 'valid':
             gt = np.zeros((13, 120, 120))
         else:
-            gt = np.load(self.gt_list[idx])
-        gt = torch.tensor(gt).float()
-        gt = gt.reshape(13, 120, 120)
-        
+            #idxs = random.sample(range(0,79500),2)
+            gt = self.gt_list[idx] #np.load()
         rf = self.rf_data[idx] 
-
+        
         #---- augmentation  ----#
         random_prob = torch.rand(1)
 
         if self.mode == 'train' and self.augmentation != 'None' and random_prob < self.augmentation_prob:
             random_target = torch.randint(low=0, high=len(self.rf_data), size=(1,)).item() 
-            
             #while random_target == idx: # random target이 동일하다면 다시 뽑음.
             #    random_target = torch.randint(low=0, high=len(self.rf_data), size=(1,)).item()
-            target_gt = np.load(self.gt_list[random_target])
-            target_gt = torch.tensor(target_gt).reshape(gt.shape)
+            target_gt = self.gt_list[random_target]
+            #target_gt = torch.tensor(target_gt).reshape(gt.shape)
             target_rf = self.rf_data[random_target]
             #print("augmetatied rf = ", rf.shape)
             #print("augmented gt = ", gt.shape)
             if self.augmentation == 'cutmix':
                 rf, gt = cutmix(rf, target_rf, gt, target_gt)
+            elif self.augmentation == 'cutmix_1d':
+                rf, gt= cutmix_1d(rf, target_rf, gt, target_gt)
             elif self.augmentation == 'mixup':
-                rf, gt = mixup(rf, target_rf, gt, target_gt)
+                rf, gt= mixup(rf, target_rf, gt, target_gt)
             elif self.augmentation =='intensity':
                 rf = self.intensity(rf,target_rf,gt,target_gt)
-            elif self.augmentation =='fft':
-                rf = fft_bandstop(rf)
+            elif self.augmentation =='noise':
+                rf = add_noise(rf)
+            elif self.augmentation =='cutbox_1d':
+                rf = cutbox_1d(rf)
+            elif self.augmentation =='dagan':
+                rf = dagan(rf)
             elif self.augmentation =='all':
                 r = np.random.rand(1)
                 if r < 0.4:
@@ -287,74 +323,84 @@ class PoseDataset(Dataset):
             if self.mode == 'train' and self.is_gaussian is True:
                 gt = gt + torch.randn(gt.size()) * self.std + self.mean
                     
-            return rf, gt
+            return rf, gt#rf1,rf2,gt1,gt2,gt1_map,gt2_map
             # return self.rf_data[idx], self.gt_list[idx]
         else:
             return rf, gt, self.img_list[idx]
 
 def cutmix(rf, target_rf, gt, target_gt):
+    r = np.random.rand(1)
+    if r>0.5:
+        return rf,gt
     beta = 1.0
     lam = np.random.beta(beta, beta)
-    # print("rf.size ", rf.size())
-    # print(rf.size()[-2])
     bbx1, bby1, bbx2, bby2 = rand_bbox(rf.size(), lam)
-    # print(bbx1, bbx2, bby1, bby2)
     rf[:, bbx1:bbx2, bby1:bby2] = target_rf[:, bbx1:bbx2, bby1:bby2]
-    # print((bbx2-bbx1)*(bby2-bby1))
-    # print(rf.size()[-1] * rf.size()[-2])
     lam = 1 - (((bbx2 - bbx1) * (bby2 - bby1)) / (rf.size()[-1] * rf.size()[-2]))
     new_rf = rf
     new_gt = lam * gt + (1 - lam) * target_gt
     return new_rf, new_gt
 
-def fft_bandstop(rf):
-    ''' add random noise
-    r = torch.rand(1)*3
-    for p in range(3):
-        for q in range(3):
-            fft= np.fft.fft(rf[p,q,:])
-            a=fft.real+np.random.normal(0,r,1764)
-            b=fft.imag+np.random.normal(0,r,1764)
-            fft=a+b*1j
-            rf[p,q]=(np.fft.ifft(fft)).real
-    '''
-    ''' cancel noise
-    for p in range(3):
-        for q in range(3):
-            fft= np.fft.fft(rf[p,q,:])
-            fft[abs(fft)<=0.005*1764]=0
-            rf[p,q]=np.fft.ifft(fft).real
-    '''
-    r = torch.rand(1)
-    rf = torch.tensor(rf).float()
-    rf= rf.view(-1,1764)
-    np.random.seed()
-    #ar=np.random.permutation(9)
-    #rf = torch.stack([rf[ar[0],:],rf[ar[1],:],rf[ar[2],:],rf[ar[3],:],rf[ar[4],:],rf[ar[5],:],rf[ar[6],:],rf[ar[7],:],rf[ar[8],:]])  
-    arr=np.random.permutation(14)*126
-    temp_raw_rf = rf
-    if r<0.5:
-        temp_raw_rf = torch.cat([temp_raw_rf[:,:126],temp_raw_rf[:,126:126*2],temp_raw_rf[:,126*2:126*3],temp_raw_rf[:,126*3:126*4],temp_raw_rf[:,126*4:126*5],temp_raw_rf[:,126*5:126*6],temp_raw_rf[:,126*6:126*7],temp_raw_rf[:,126*7:126*8],temp_raw_rf[:,126*8:126*9],temp_raw_rf[:,126*9:126*10],temp_raw_rf[:,126*10:126*11],temp_raw_rf[:,126*11:126*12],temp_raw_rf[:,126*12:126*13],temp_raw_rf[:,126*13:126*14]])
-    else:
-        temp_raw_rf = torch.cat([temp_raw_rf[:,arr[0]:arr[0]+126],temp_raw_rf[:,arr[1]:arr[1]+126],temp_raw_rf[:,arr[2]:arr[2]+126],temp_raw_rf[:,arr[3]:arr[3]+126],temp_raw_rf[:,arr[4]:arr[4]+126],temp_raw_rf[:,arr[5]:arr[5]+126],temp_raw_rf[:,arr[6]:arr[6]+126],temp_raw_rf[:,arr[7]:arr[7]+126],temp_raw_rf[:,arr[8]:arr[8]+126],temp_raw_rf[:,arr[9]:arr[9]+126],temp_raw_rf[:,arr[10]:arr[10]+126],temp_raw_rf[:,arr[11]:arr[11]+126],temp_raw_rf[:,arr[12]:arr[12]+126],temp_raw_rf[:,arr[13]:arr[13]+126]])
-    resize_transform = transforms.Compose(
-        [transforms.ToPILImage(),
-        transforms.Resize((120, 120)),
-        transforms.ToTensor()]
-    )
-    temp_raw_rf = resize_transform(temp_raw_rf)
-    return temp_raw_rf
+def cutmix_1d(rf, target_rf, gt, target_gt):
+    r = np.random.rand(1)
+    if r>0.5:
+        return rf,gt
+    beta = 1.0
+    lam = np.random.beta(beta, beta)
+    bbx1, bbx2 = rand_range(lam)
+    rf[0, bbx1:bbx2] = target_rf[0, bbx1:bbx2]
+    lam = 1 - ((bbx2 - bbx1) / 1792)
+    new_rf = rf
+    new_gt = lam * gt + (1 - lam) * target_gt
+    return new_rf, new_gt
 
-def mixup(rf, target_rf, gt, target_gt):
-    '''
-    논문에서는 배치 내에서 섞지만, 전체 데이터에서 mixup.
-    '''
+def dagan(rf):
+    r = np.random.rand(1)
+    if r>0.8:
+        return rf
+    z = torch.randn((1,400))
+    z = z.float()
+    rf=rf.view(40,40)
+    with torch.no_grad():
+        res = g(rf.unsqueeze(0).unsqueeze(0),z)
+        res = res[0]
+    res=res.squeeze()
+    res=res.view(-1,1600)
+    return res
+
+def cutbox_1d(rf):
+    r = np.random.rand(1)
+    if r>0.5:
+        return rf
+    
+    for attempt in range(100):
+        area = 1792
+        target_area = random.uniform(0.02,0.4)*area
+        l = np.int(target_area)
+        if l < 1792:
+            x1 = random.randint(0,1792-l)
+            rf[0,x1:x1+l] = 0
+        return rf
+
+    return rf
+
+def add_noise(rf):
+    r = np.random.rand(1)
+    if r>0.9:
+        return rf
+    a = torch.normal(0.0,0.05,(1,1792))
+    rf = rf+a
+    return rf
+    
+def mixup(rf,target_rf,gt,target_gt):
+    r = np.random.rand(1)
+    if r>0.5:
+        return rf,gt
     alpha = 1.0
     lam = np.random.beta(alpha, alpha)
-
     new_gt = lam * gt + (1 - lam) * target_gt
     new_rf = lam * rf + (1 - lam) * target_rf
-    return new_rf, new_gt
+    return new_rf,new_gt
 
 class Intensity(nn.Module):
     def __init__(self, scale=0.05):
@@ -384,3 +430,15 @@ def rand_bbox(size, lam):
     bby2 = np.clip(cy + cut_h // 2, 0, H)
 
     return bbx1, bby1, bbx2, bby2
+
+def rand_range(lam):
+    W = 1792
+    cut_rat = 1. - lam
+    cut_w = np.int(W * cut_rat)
+    # uniform
+    cx = np.random.randint(W)
+
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+
+    return bbx1, bbx2

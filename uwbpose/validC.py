@@ -15,6 +15,7 @@ from inference import *
 from make_log import *
 from evaluate import *
 import resnet
+from cutmix.utils import CutMixCrossEntropyLoss
 
 def prediction(model, rf, target_heatmap, criterion):
     out = model(rf)
@@ -33,62 +34,21 @@ def prediction(model, rf, target_heatmap, criterion):
 
 def validate(dataloader, model, logger, criterion, debug_img=False):
     model.eval()
-    criterion = JointsMSELoss().cuda()
-    vis = Visualize(show_debug_idx=False) 
     with torch.no_grad():
-        epoch_loss = []
-        avg_acc = 0
         sum_acc = 0
         total_cnt = 0
-
         iterate = 0
-
-        true_detect = np.zeros((4, 13))
-        whole_count = np.zeros((4, 13))
-        
-        if debug_img == True:
-            for rf, target_heatmap, img in tqdm(dataloader):
-                rf, target_heatmap, img = rf.cuda(), target_heatmap.cuda(), img.cuda()
-                out, preds, target_label, temp_true_det, temp_whole_cnt = prediction(model, rf, target_heatmap, criterion) #loss, temp_avg_acc, cnt, 
-                
-                #epoch_loss.append(loss)
-                #sum_acc += temp_avg_acc * cnt
-                #total_cnt += cnt
-                #avg_acc = sum_acc / total_cnt if total_cnt != 0 else 0
-                true_detect += temp_true_det
-                whole_count += temp_whole_cnt
-
-                #save_debug_images(img, target_label*4, target_heatmap, preds*4, out, './vis/batch_{}'.format(iterate))
-                #vis.detect_and_draw_person(img.clone().cpu().numpy(), preds*4, iterate, 'pred')
-                #vis.detect_and_draw_person(img.clone().cpu().numpy(), target_label*4, iterate, 'gt')
-                vis.compare_visualize(img.clone().cpu().numpy(), preds*4, target_label*4, iterate)
-
-                #if iterate % 100 == 0:
-                #    logger.info("iteration[%d] batch loss %.6f\tavg_acc %.4f\ttotal_count %d"%(iterate, loss.item(), avg_acc, total_cnt))
-                iterate += 1
-
-        else:
-            for rf, target_heatmap in tqdm(dataloader):
-                rf, target_heatmap = rf.cuda(), target_heatmap.cuda()
-                out, preds, target_label, temp_true_det, temp_whole_cnt = prediction(model, rf, target_heatmap, criterion) #loss, temp_avg_acc, cnt,
-                
-                #epoch_loss.append(loss)
-                #sum_acc += temp_avg_acc * cnt
-                #total_cnt += cnt
-                #avg_acc = sum_acc / total_cnt if total_cnt != 0 else 0
-                true_detect += temp_true_det
-                whole_count += temp_whole_cnt
-
-                #if iterate % 100 == 0:
-                #    logger.info("iteration[%d] batch loss %.6f\tavg_acc %.4f\ttotal_count %d"%(iterate, loss.item(), avg_acc, total_cnt))
-                iterate += 1
-        
-        #logger.info("epoch loss : %.6f"%torch.tensor(epoch_loss).mean().item())
-        #logger.info("epoch acc on test data : %.4f"%(avg_acc))
-        pck_res = true_detect / whole_count * 100
-        thr = [0.1, 0.2, 0.3, 0.5]
-        for t in range(4):
-            logger.info("PCK {} average {} - {}".format(thr[t], np.average(pck_res[t]), pck_res[t]))
+        for rf,gt in tqdm(dataloader): 
+            rf,gt=rf.cuda(),gt.cuda()
+            out = model(rf)
+            c=torch.argmax(out, dim=1)
+            d=torch.argmax(gt.squeeze(), dim=1)
+            #print(out,gt)
+            sum_acc+=torch.sum(d==c)
+            iterate += 1
+            total_cnt+=len(gt)
+        logger.info("epoch acc on test data : %.4f"%(sum_acc/total_cnt))
+        return sum_acc/total_cnt
 
 
 if __name__ == '__main__':
@@ -99,7 +59,7 @@ if __name__ == '__main__':
     #model_name = "210109_newdata_normalize_nlayer18_adam_lr0.001_batch32_momentum0.9_schedule[10, 20]_nepoch30"
     #model_name = "210112_mixup_nlayer18_adam_lr0.001_batch32_momentum0.9_schedule[10, 20]_nepoch30"
     #model_name = '210113_intensity_nlayer18_adam_lr0.001_batch32_momentum0.9_schedule[10, 20]_nepoch30'
-    model_name = '210413_1d_k9_nlayer18_adam_lr0.001_batch32_momentum0.9_schedule[5]_nepoch15_resnet'
+    model_name = '210427_classifier_1x1_1d_2500_mixup_nlayer18_adam_lr0.0001_batch100_momentum0.9_schedule[]_nepoch100_resnet'
     if len(model_name) == 0:
         print("You must enter the model name for testing")
         sys.exit()
@@ -129,7 +89,8 @@ if __name__ == '__main__':
         model = get_pose_hrnet()
     else:
         if args.flatten:
-            model = get_2d_pose_net(num_layer=args.nlayer, input_depth=9)
+            #model = get_2d_pose_net(num_layer=args.nlayer, input_depth=1)
+            model = get_Classifier(num_layer=args.nlayer)
         else:
             model = get_pose_net(num_layer=args.nlayer, input_depth=1)
 
@@ -149,18 +110,27 @@ if __name__ == '__main__':
     #----- loss function -----
     #criterion = nn.MSELoss().cuda()
     criterion = JointsMSELoss().cuda()
-
     #----- dataset -----
     test_data = PoseDataset(mode='test', args=args)
     dataloader = DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=16, pin_memory=True)
+    celos = nn.CrossEntropyLoss()
+    clos = CutMixCrossEntropyLoss(True)
     model_name = model_name + '_epoch{}.pt'
     # 원하는 모델 구간 지정해야함.
     #for i in range(20, 30):
-    for i in range(4,15):
+    bestidx=0
+    bestacc=0
+    tempacc=0
+    for i in range(0,100):
         logger.info("epoch %d"%i)
         logger.info('./save_model/' + model_name.format(i))
         model.module.load_state_dict(torch.load('./save_model/'+model_name.format(i)))
-
         #model.module.load_state_dict(torch.load(model_name.format(i)))
         #model.module.load_state_dict(torch.load(model_name))
-        validate(dataloader, model, logger, criterion, debug_img=False)
+        tempacc=validate(dataloader, model, logger, clos, debug_img=False)
+        if bestacc<tempacc:
+            bestacc=tempacc
+            bestidx=i
+    print("bestacc : %f"%bestacc)
+    print("bestidx : %d"%bestidx)
+
